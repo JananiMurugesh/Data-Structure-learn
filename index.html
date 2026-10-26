@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Study Planner</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --text:#e2e8f0; --mute:#94a3b8; --acc:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:18px 24px; background:#1e3a5f; text-align:center; }
+  header h1 { margin:0; font-size:1.6rem; }
+  header p { margin:4px 0 0; color:var(--mute); }
+  main { display:grid; grid-template-columns:320px 1fr; gap:16px; padding:16px; max-width:1200px; margin:auto; }
+  @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  h2 { margin:0 0 12px; font-size:1.05rem; color:var(--acc); }
+  input, select { width:100%; padding:9px; margin:4px 0 10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  label { font-size:.85rem; color:var(--mute); }
+  button { padding:9px 12px; margin:3px 3px 3px 0; border:0; border-radius:8px; background:var(--acc); color:#04283a; font-weight:600; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  button.alt { background:#475569; color:var(--text); }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); font-size:.9rem; }
+  th { color:var(--mute); font-weight:600; }
+  .HIGH { color:#f87171; font-weight:700; } .MEDIUM { color:#fbbf24; font-weight:700; } .LOW { color:#4ade80; font-weight:700; }
+  .Done { color:#4ade80; } .Pending { color:#fbbf24; }
+  #out { white-space:pre-wrap; background:var(--bg); border-radius:8px; padding:12px; min-height:90px; font-family:Consolas,monospace; font-size:.9rem; }
+  .bar { height:18px; background:var(--bg); border-radius:9px; overflow:hidden; margin-top:10px; }
+  #fill { height:100%; width:0; background:linear-gradient(90deg,#22c55e,#38bdf8); transition:width .3s; }
+  #stats { color:var(--mute); font-size:.85rem; margin-top:6px; }
+</style>
+</head>
+<body>
+<header><h1>Smart Study Planner</h1><p>Data Structures based project: Plan · Organize · Study · Achieve</p></header>
+<main>
+  <section class="card">
+    <h2>Add Study Task</h2>
+    <label>Subject</label><input id="sub" placeholder="DBMS">
+    <label>Topic</label><input id="top" placeholder="Transactions">
+    <label>Priority</label><select id="pri"><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>
+    <label>Deadline</label><input id="dead" type="date">
+    <button onclick="addTask()">Add Task</button>
+    <h2 style="margin-top:14px">Actions</h2>
+    <button onclick="nextTask()">Next Priority</button>
+    <button onclick="completeTask()">Complete</button>
+    <button class="alt" onclick="undoTask()">Undo</button>
+    <button class="alt" onclick="searchSubject()">Search Subject</button>
+    <button class="alt" onclick="showTree()">Topic Tree</button>
+    <button class="alt" onclick="bfs()">Graph BFS</button>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>All Tasks</h2>
+      <table><thead><tr><th>#</th><th>Subject</th><th>Topic</th><th>Priority</th><th>Deadline</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Output</h2><div id="out">Ready.</div>
+      <div class="bar"><div id="fill"></div></div><div id="stats"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+// ===== Data Structures (same as Main.java) =====
+const allTasks = [];                 // ArrayList
+const taskQueue = [];                // Queue (FIFO)
+const completed = [];                // Stack (LIFO)
+const subjectTopics = new Map();     // HashMap
+const graph = new Map();             // Graph (adjacency list)
+let root = null;                     // Tree (BST)
+let seq = 0;
+
+// Priority Queue = binary min-heap (HIGH first, then insertion order)
+const heap = [];
+const pv = t => ({ HIGH: 1, MEDIUM: 2, LOW: 3 }[t.priority]);
+const less = (a, b) => pv(a) < pv(b) || (pv(a) === pv(b) && a.id < b.id);
+function hPush(t) {
+  heap.push(t);
+  for (let i = heap.length - 1, p; i > 0 && less(heap[i], heap[p = (i - 1) >> 1]); i = p)
+    [heap[i], heap[p]] = [heap[p], heap[i]];
+}
+function hPop() {
+  if (!heap.length) return null;
+  const top = heap[0], last = heap.pop();
+  if (heap.length) {
+    heap[0] = last;
+    for (let i = 0;;) {
+      let m = i, l = 2 * i + 1, r = l + 1;
+      if (l < heap.length && less(heap[l], heap[m])) m = l;
+      if (r < heap.length && less(heap[r], heap[m])) m = r;
+      if (m === i) break;
+      [heap[i], heap[m]] = [heap[m], heap[i]]; i = m;
+    }
+  }
+  return top;
+}
+
+// BST insert + inorder
+const insert = (n, t) => !n ? { t, l: null, r: null }
+  : (t.toLowerCase() < n.t.toLowerCase() ? n.l = insert(n.l, t)
+  : t.toLowerCase() > n.t.toLowerCase() ? n.r = insert(n.r, t) : 0, n);
+const inorder = (n, a = []) => n ? (inorder(n.l, a), a.push(n.t), inorder(n.r, a), a) : a;
+
+// ===== Helpers =====
+const $ = id => document.getElementById(id);
+const say = s => $("out").textContent = s;
+const fmt = t => `${t.subject} - ${t.topic} [${t.priority}] - ${t.deadline}`;
+const edge = (a, b) => { if (!graph.has(a)) graph.set(a, []); graph.get(a).push(b); };
+
+function render() {
+  $("rows").innerHTML = allTasks.map((t, i) => {
+    const st = completed.includes(t) ? "Done" : "Pending";
+    return `<tr><td>${i + 1}</td><td>${esc(t.subject)}</td><td>${esc(t.topic)}</td>
+      <td class="${t.priority}">${t.priority}</td><td>${esc(t.deadline)}</td><td class="${st}">${st}</td></tr>`;
+  }).join("") || `<tr><td colspan="6" style="color:var(--mute)">No tasks yet.</td></tr>`;
+  const total = allTasks.length, done = completed.length;
+  const pct = total ? Math.round(done * 100 / total) : 0;
+  $("fill").style.width = pct + "%";
+  $("stats").textContent = `Progress ${pct}%  |  Total ${total}  |  Completed ${done}  |  Pending ${taskQueue.length}`;
+}
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ===== Features =====
+function addTask() {
+  const subject = $("sub").value.trim(), topic = $("top").value.trim(), deadline = $("dead").value;
+  if (!subject || !topic || !deadline) return say("Ella fields-um fill pannunga!");
+  const t = { id: seq++, subject, topic, priority: $("pri").value, deadline };
+  allTasks.push(t); taskQueue.push(t); hPush(t);
+  if (!subjectTopics.has(subject)) subjectTopics.set(subject, []);
+  subjectTopics.get(subject).push(topic);
+  root = insert(root, topic);
+  edge(subject, topic); edge(topic, subject);
+  ["sub", "top", "dead"].forEach(i => $(i).value = "");
+  say("Task Added Successfully!\n" + fmt(t)); render();
+}
+function nextTask() { say(heap.length ? "Next Priority Task:\n" + fmt(heap[0]) : "No pending tasks."); }
+function completeTask() {
+  const t = hPop();
+  if (!t) return say("No tasks to complete.");
+  taskQueue.splice(taskQueue.indexOf(t), 1);
+  completed.push(t);
+  say("Task Completed!\n" + fmt(t)); render();
+}
+function undoTask() {
+  const t = completed.pop();
+  if (!t) return say("No completed task to undo.");
+  taskQueue.push(t); hPush(t);
+  say("Undo Successful! Moved back to pending:\n" + fmt(t)); render();
+}
+function searchSubject() {
+  const s = (prompt("Enter Subject:") || "").trim();
+  if (!s) return;
+  const topics = subjectTopics.get(s);
+  say(topics ? `Subject: ${s}\nTopics:\n- ` + topics.join("\n- ") : "Subject not found.");
+}
+function showTree() {
+  say(root ? "Topics in sorted order:\n- " + inorder(root).join("\n- ") : "No topics available.");
+}
+function bfs() {
+  if (!graph.size) return say("Graph is empty.");
+  const start = (prompt("Enter starting Subject/Topic:") || "").trim();
+  if (!start) return;
+  if (!graph.has(start)) return say("Node not found in graph.");
+  const q = [start], seen = new Set([start]), order = [];
+  while (q.length) {
+    const cur = q.shift(); order.push(cur);
+    for (const n of graph.get(cur)) if (!seen.has(n)) { seen.add(n); q.push(n); }
+  }
+  say("BFS Traversal:\n" + order.join(" -> ") + " -> END");
+}
+render();
+</script>
+</body>
+</html>
